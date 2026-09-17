@@ -1,0 +1,15 @@
+# Ignore everything by default
+/*
+
+# Whitelist .gitignore itself
+!.gitignore
+
+# Whitelist extensions directory and all its contents
+!/extensions/
+!/extensions/**
+
+# Ignore transient artifacts within extensions
+extensions/**/node_modules/
+extensions/**/.vite/
+extensions/**/dist/
+extensions/**/*.log
