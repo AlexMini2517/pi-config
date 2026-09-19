@@ -1,6 +1,5 @@
 {
-  "name": "pi-powershell-guard",
-  "version": "1.0.0",
+  "name": "pi-bash-guard",
   "private": true,
   "type": "module",
   "pi": {
