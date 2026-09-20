@@ -159,7 +159,9 @@ export default function mdLog(pi: ExtensionAPI) {
 		}
 	});
 
-	pi.on("message_end", async (event, ctx: any) => {
+	pi.on("message_end", async (event) => {
+		if (!logFile) return;
+
 		const msg = event.message;
 		if (!msg || !("role" in msg)) return;
 
@@ -172,13 +174,7 @@ export default function mdLog(pi: ExtensionAPI) {
 			const text = stripSkillBlocks(rawText.trim());
 			if (!text) return;
 
-			await withLock(async () => {
-				if (!logFile) {
-					const outDir = await ensureOutputDir(ctx);
-					if (!outDir) return;
-					const sid = ctx.sessionManager?.getSessionId?.() || "session";
-					initLogFile(text, sid, outDir, ctx);
-				}
+			await withLock(() => {
 				const now = new Date().toTimeString().slice(0, 5);
 				appendToFile(`### 👤 Utente (${now})\n\n${text}`);
 			});
