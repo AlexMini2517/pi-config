@@ -8,7 +8,7 @@ Captures conversations cleanly as you chat, stripping prompt bloat and formattin
 
 - **Live Streaming**: Writes prompts and assistant responses to a Markdown file in real time as the chat progresses.
 - **Zero Skill Bloat**: Automatically strips injected `<skill name="...">...</skill>` tags from prompts so your notes remain clean and readable.
-- **Obsidian-Ready**: Generates YAML frontmatter (`title`, `date`, `session_id`, `tags: [ai/pi-agent, second-brain]`) and structured headers (`### 👤 Utente`, `### 🤖 Pi`).
+- **Obsidian-Ready**: Generates YAML frontmatter (`title`, `date`, `session_id`, `tags: [ai/pi-agent, second-brain]`) and structured headers (`# USER`, `# ASSISTANT`).
 - **Timestamped Filenames**: Sessions are automatically named `YYYY-MM-DD_HH-MM-SS.md` based on the exact moment the first command/prompt is sent.
 - **Portable & Configurable**: No hardcoded personal paths. The output directory is saved locally in `~/.pi/agent/md-log.json`.
 

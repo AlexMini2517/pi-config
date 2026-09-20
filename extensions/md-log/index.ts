@@ -22,7 +22,7 @@ function getSavedDir(): string | null {
 				? data.outputDir.trim()
 				: null;
 		}
-	} catch {}
+	} catch { }
 	return null;
 }
 
@@ -45,6 +45,8 @@ export default function mdLog(pi: ExtensionAPI) {
 	let sessionTitle = "Sessione Pi Agent";
 	let writeLock: Promise<void> = Promise.resolve();
 
+	let assistantHeaderWritten = false;
+
 	function withLock<T>(fn: () => T | Promise<T>): Promise<T> {
 		const prev = writeLock;
 		let release: () => void;
@@ -62,32 +64,43 @@ export default function mdLog(pi: ExtensionAPI) {
 				current = fs.readFileSync(logFile, "utf-8");
 			}
 			const prefix = current.trim().length > 0 ? "\n\n" : "";
-			fs.writeFileSync(logFile, current + prefix + text + "\n", "utf-8");
-		} catch {}
+			fs.writeFileSync(logFile, current.trimEnd() + prefix + text + "\n", "utf-8");
+		} catch { }
 	}
 
 	function getBackfillHistory(ctx: any): string[] {
 		const blocks: string[] = [];
 		if (!ctx?.sessionManager?.getEntries) return blocks;
+		let currentAssistantParts: string[] = [];
+
+		const flushAssistant = () => {
+			if (currentAssistantParts.length > 0) {
+				blocks.push(`---\n\n# ASSISTANT\n\n${currentAssistantParts.join("\n\n")}`);
+				currentAssistantParts = [];
+			}
+		};
+
 		for (const entry of ctx.sessionManager.getEntries()) {
 			if (entry.type !== "message" || !entry.message) continue;
 			const msg = entry.message;
 			if (msg.role === "user") {
+				flushAssistant();
 				const raw = typeof msg.content === "string"
 					? msg.content
 					: Array.isArray(msg.content)
 						? msg.content.filter((c: any) => c.type === "text").map((c: any) => c.text).join("\n")
 						: "";
 				const text = stripSkillBlocks(raw.trim());
-				if (text) blocks.push(`### 👤 Utente\n\n${text}`);
+				if (text) blocks.push(`---\n\n# USER\n\n${text}`);
 			} else if (msg.role === "assistant") {
 				const parts = (msg.content || [])
 					.filter((c: any) => c.type === "text")
 					.map((c: any) => (c.text as string).trim())
 					.filter(Boolean);
-				if (parts.length > 0) blocks.push(`### 🤖 Pi\n\n${parts.join("\n\n")}\n\n---`);
+				if (parts.length > 0) currentAssistantParts.push(parts.join("\n\n"));
 			}
 		}
+		flushAssistant();
 		return blocks;
 	}
 
@@ -145,6 +158,7 @@ export default function mdLog(pi: ExtensionAPI) {
 	}
 
 	pi.on("session_start", async (_event, ctx: any) => {
+		assistantHeaderWritten = false;
 		let lastData: { file: string | null } | undefined;
 		for (const entry of ctx.sessionManager.getEntries()) {
 			if (entry.type === "custom" && entry.customType === "md-log") {
@@ -159,9 +173,7 @@ export default function mdLog(pi: ExtensionAPI) {
 		}
 	});
 
-	pi.on("message_end", async (event) => {
-		if (!logFile) return;
-
+	pi.on("message_end", async (event, ctx: any) => {
 		const msg = event.message;
 		if (!msg || !("role" in msg)) return;
 
@@ -174,14 +186,24 @@ export default function mdLog(pi: ExtensionAPI) {
 			const text = stripSkillBlocks(rawText.trim());
 			if (!text) return;
 
+			if (!logFile) {
+				const dir = getSavedDir();
+				if (dir) {
+					const sid = ctx?.sessionManager?.getSessionId?.() || "session";
+					initLogFile(text, sid, dir, ctx);
+				}
+			}
+			if (!logFile) return;
+
+			assistantHeaderWritten = false;
 			await withLock(() => {
-				const now = new Date().toTimeString().slice(0, 5);
-				appendToFile(`### 👤 Utente (${now})\n\n${text}`);
+				appendToFile(`---\n\n# USER\n\n${text}`);
 			});
 			return;
 		}
 
 		if (msg.role === "assistant") {
+			if (!logFile) return;
 			const textParts = (msg.content || [])
 				.filter((c: any) => c.type === "text")
 				.map((c: any) => (c.text as string).trim())
@@ -189,8 +211,13 @@ export default function mdLog(pi: ExtensionAPI) {
 			if (textParts.length === 0) return;
 
 			await withLock(() => {
-				const now = new Date().toTimeString().slice(0, 5);
-				appendToFile(`### 🤖 Pi (${now})\n\n${textParts.join("\n\n")}\n\n---`);
+				const body = textParts.join("\n\n");
+				if (!assistantHeaderWritten) {
+					appendToFile(`---\n\n# ASSISTANT\n\n${body}`);
+					assistantHeaderWritten = true;
+				} else {
+					appendToFile(body);
+				}
 			});
 			return;
 		}
