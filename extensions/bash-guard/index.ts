@@ -205,6 +205,14 @@ async function promptRunOrAbort(ctx: any, command: string, risk: Risk): Promise<
 	const header = `Command flagged as ${risk.severity.toUpperCase()} risk:`;
 	const body = `${header}\n\n${reasonsText}\n\nCommand:\n${command}`;
 
+	if (ctx.mode === "rpc") {
+		const selected = await ctx.ui.select(
+			`Potentially destructive command (${risk.severity.toUpperCase()}):\n${command}\n\nReasons:\n${reasonsText}`,
+			["Run", "Abort"]
+		);
+		return selected === "Run" ? "run" : "abort";
+	}
+
 	const items: SelectItem[] = [
 		{ value: "run", label: "Run", description: "Execute the command" },
 		{ value: "abort", label: "Abort", description: "Block this command" },
