@@ -61,51 +61,56 @@ export interface ModelConfig {
 }
 
 export function getModelThinkingConfig(id: string): { reasoning: boolean; thinkingLevelMap: ThinkingLevelMap } {
-  const lower = id.toLowerCase();
-  if (lower.includes("union-alpha") || lower.includes("longcat") || lower.includes("gemma")) {
-    return { reasoning: false, thinkingLevelMap: NO_THINKING_MAP };
-  }
-  if (
-    lower.includes("deepseek") ||
-    lower.includes("glm") ||
-    lower.includes("laguna") ||
-    lower.includes("muse-spark") ||
-    lower.includes("solar") ||
-    lower.includes("reasoning") ||
-    lower.includes("r1")
-  ) {
-    return { reasoning: true, thinkingLevelMap: COMMON_THINKING_MAP };
-  }
-  return { reasoning: false, thinkingLevelMap: NO_THINKING_MAP };
+  // All current free models support thinking mode: off, low, medium, high, extrahigh
+  return { reasoning: true, thinkingLevelMap: COMMON_THINKING_MAP };
 }
 
 // ─── Known Free Fallback Models ────────────────────────────────────────────
 
 export const KNOWN_FREE_MODELS: readonly ModelConfig[] = [
   {
-    id: "cline-free/deepseek-v4.1-flash",
-    name: "DeepSeek V4.1 Flash",
+    id: "stealth/pixel-canary",
+    name: "Pixel Canary",
     reasoning: true,
     input: ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 921_600,
+    contextWindow: 1_048_576,
     maxTokens: 131_072,
     thinkingLevelMap: COMMON_THINKING_MAP,
     compat: CLINEPASS_OPENAI_COMPAT,
   },
   {
-    id: "stealth/union-alpha",
-    name: "Union Alpha",
-    reasoning: false,
+    id: "cline-free/mimo-v2.6-flash",
+    name: "MiMo-V2.6-Flash",
+    reasoning: true,
     input: ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 1_048_576,
     maxTokens: 131_072,
-    thinkingLevelMap: NO_THINKING_MAP,
-    compat: {
-      ...CLINEPASS_OPENAI_COMPAT,
-      supportsReasoningEffort: false,
-    },
+    thinkingLevelMap: COMMON_THINKING_MAP,
+    compat: CLINEPASS_OPENAI_COMPAT,
+  },
+  {
+    id: "cline-free/deepseek-v4.1-flash",
+    name: "DeepSeek V4.1 Flash",
+    reasoning: true,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 1_048_576,
+    maxTokens: 131_072,
+    thinkingLevelMap: COMMON_THINKING_MAP,
+    compat: CLINEPASS_OPENAI_COMPAT,
+  },
+  {
+    id: "cline-free/gemini-3.8-flash",
+    name: "Gemini 3.8 Flash",
+    reasoning: true,
+    input: ["text"],
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 1_048_576,
+    maxTokens: 65_536,
+    thinkingLevelMap: COMMON_THINKING_MAP,
+    compat: CLINEPASS_OPENAI_COMPAT,
   },
   {
     id: "cline-free/muse-spark-1.3-contributor",
@@ -113,40 +118,7 @@ export const KNOWN_FREE_MODELS: readonly ModelConfig[] = [
     reasoning: true,
     input: ["text"],
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 921_600,
-    maxTokens: 131_072,
-    thinkingLevelMap: COMMON_THINKING_MAP,
-    compat: CLINEPASS_OPENAI_COMPAT,
-  },
-  {
-    id: "z-ai/glm-5.3-flash",
-    name: "GLM-5.3-Flash",
-    reasoning: true,
-    input: ["text"],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     contextWindow: 1_048_576,
-    maxTokens: 131_072,
-    thinkingLevelMap: COMMON_THINKING_MAP,
-    compat: CLINEPASS_OPENAI_COMPAT,
-  },
-  {
-    id: "cline-free/solar-pro4",
-    name: "Solar Pro 4",
-    reasoning: true,
-    input: ["text"],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 524_288,
-    maxTokens: 131_072,
-    thinkingLevelMap: COMMON_THINKING_MAP,
-    compat: CLINEPASS_OPENAI_COMPAT,
-  },
-  {
-    id: "poolside/laguna-s-2.1:free",
-    name: "Laguna S 2.1",
-    reasoning: true,
-    input: ["text"],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 262_144,
     maxTokens: 131_072,
     thinkingLevelMap: COMMON_THINKING_MAP,
     compat: CLINEPASS_OPENAI_COMPAT,
@@ -155,6 +127,7 @@ export const KNOWN_FREE_MODELS: readonly ModelConfig[] = [
 
 // ─── Dynamic Model Discovery (Free Only) ───────────────────────────────────
 
+export const RECOMMENDED_MODELS_ENDPOINT = "/api/v1/ai/cline/recommended-models";
 export const MODELS_ENDPOINT = "/api/v1/models";
 export const MODELS_FETCH_TIMEOUT_MS = 6_000;
 
@@ -180,14 +153,13 @@ function toMicroPerToken(val: unknown, fallbackVal: number): number {
   return n != null ? n * 1_000_000 : fallbackVal;
 }
 
-/** The 6 official Cline Free tier models. */
+/** The 5 official Cline Free tier models currently available. */
 export const CLINE_FREE_TARGET_IDS = new Set([
+  "stealth/pixel-canary",
+  "cline-free/mimo-v2.6-flash",
   "cline-free/deepseek-v4.1-flash",
-  "stealth/union-alpha",
+  "cline-free/gemini-3.8-flash",
   "cline-free/muse-spark-1.3-contributor",
-  "z-ai/glm-5.3-flash",
-  "cline-free/solar-pro4",
-  "poolside/laguna-s-2.1:free",
 ]);
 
 export function isFreeModel(_raw: RawModelEntry, id: string): boolean {
@@ -271,19 +243,37 @@ export async function fetchRemoteModels(
       headers.Authorization = `Bearer ${apiKey}`;
     }
 
-    const response = await fetchFn(`${apiBase}${MODELS_ENDPOINT}`, {
-      headers,
-      signal: controller.signal,
-    });
+    // Try recommended-models endpoint first (returns { free: [...] })
+    let rawList: RawModelEntry[] = [];
+    try {
+      const recResponse = await fetchFn(`${apiBase}${RECOMMENDED_MODELS_ENDPOINT}`, {
+        headers,
+        signal: controller.signal,
+      });
+      if (recResponse.ok) {
+        const recJson: unknown = await recResponse.json();
+        if (isRecord(recJson) && Array.isArray(recJson.free)) {
+          rawList = recJson.free as RawModelEntry[];
+        }
+      }
+    } catch {
+      // fallback to MODELS_ENDPOINT below
+    }
 
-    if (!response.ok) return undefined;
-
-    const json: unknown = await response.json();
-    const rawList: RawModelEntry[] = Array.isArray(json)
-      ? json
-      : isRecord(json) && Array.isArray(json.data)
-        ? (json.data as RawModelEntry[])
-        : [];
+    if (rawList.length === 0) {
+      const response = await fetchFn(`${apiBase}${MODELS_ENDPOINT}`, {
+        headers,
+        signal: controller.signal,
+      });
+      if (response.ok) {
+        const json: unknown = await response.json();
+        rawList = Array.isArray(json)
+          ? json
+          : isRecord(json) && Array.isArray(json.data)
+            ? (json.data as RawModelEntry[])
+            : [];
+      }
+    }
 
     if (rawList.length === 0) return undefined;
 
@@ -312,12 +302,15 @@ export async function resolveModels(
       for (const m of remote) {
         map.set(m.id, m);
       }
-      for (const m of KNOWN_FREE_MODELS) {
-        if (!map.has(m.id)) {
-          map.set(m.id, m);
-        }
+      const result: ModelConfig[] = [];
+      for (const known of KNOWN_FREE_MODELS) {
+        result.push(map.get(known.id) ?? known);
+        map.delete(known.id);
       }
-      return Array.from(map.values());
+      for (const extra of map.values()) {
+        result.push(extra);
+      }
+      return result;
     }
   } catch {
     // ignore
