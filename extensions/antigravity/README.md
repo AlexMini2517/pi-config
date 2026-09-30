@@ -50,21 +50,25 @@ Questa estensione applica la medesima architettura trasparente e lecita a **Pi A
 
 ## 3. Funzionalità
 
-- **Provider `antigravity`**:
-  - Seleziona un modello con `/model antigravity/<id>` in Pi.
-  - Streaming in tempo reale di risposte e codice.
-  - Conteggio trasparente di token e token di ragionamento (*thinking tokens*).
-  - Cancellazione pulita su `Ctrl+C` o abort signal (terminazione del processo figlio).
-- **Scoperta Dinamica dei Modelli**:
-  - Interroga direttamente `agy models` per ottenere la lista sempre aggiornata dei modelli abilitati sul tuo account Google.
-  - Include modelli ad alto ragionamento come `gemini-3.8-flash-high`, `gemini-3.1-pro-high`, `claude-sonnet-4-6` e `gpt-oss-120b-medium`.
+- **Doppio Runner Ufficiale (Zero Rischio Ban)**:
+  - **ACP Server Mode (Identico a Zed e T3 Code)**: usa il server `agy_acp_server.exe` distribuito ufficialmente da Google su Google CDN (`dl.google.com/agy-extensions/releases/`), comunicando via stdio JSON-RPC 2.0 con standard Agent Client Protocol.
+  - **CLI Runner Mode**: usa l'eseguibile ufficiale locale `agy.exe` per streaming immediato con la sessione Google già attiva.
+- **Provider `antigravity` per Pi**:
+  - Seleziona un modello con `/model antigravity/<id>` in Pi (es. `antigravity/gemini-3.8-flash`, `antigravity/gemini-3.1-pro`, `antigravity/claude-sonnet-4-6`).
+  - Streaming in tempo reale con supporto nativo per i blocchi di ragionamento (*thinking blocks*).
+  - Conteggio trasparente di token e token di ragionamento.
+  - Cancellazione pulita su `Ctrl+C` o abort signal.
+- **Caricamento Istantaneo (0ms boot)**:
+  - I modelli supportati vengono registrati immediatamente all'avvio senza bloccare Pi con chiamate di rete.
 - **Comando `/antigravity`**:
-  - `/antigravity status` — Verifica lo stato dell'eseguibile e l'autenticazione con Google.
-  - `/antigravity models` — Mostra la lista dei modelli disponibili.
-  - `/antigravity test` — Esegue un turno di test per confermare la connessione.
+  - `/antigravity status` — Mostra lo stato di connessione, modalità attiva (ACP vs CLI) e modelli disponibili.
+  - `/antigravity install-acp` — Scarica e verifica l'archivio ufficiale Google ACP da Google CDN via SHA-256.
+  - `/antigravity auth` — Autentica l'account Google con il server ACP aprendo il browser OAuth ufficiale.
+  - `/antigravity models` — Mostra il catalogo completo dei modelli.
+  - `/antigravity test` — Esegue un turno di test rapido.
   - `/antigravity task <prompt>` — Esegue un task completo di Antigravity nello spazio di lavoro corrente.
 - **Tool `antigravity_task`**:
-  - Tool per l'LLM di Pi per delegare compiti complessi di programmazione o refactoring ad Antigravity.
+  - Tool per l'agente Pi per delegare compiti complessi di programmazione o refactoring ad Antigravity.
 
 ---
 
@@ -83,14 +87,19 @@ In una sessione attiva di Pi, esegui:
 ```
 oppure riavvia `pi`.
 
-### Verificare l'installazione
+### Verificare lo stato
 In Pi, digita:
 ```
 /antigravity status
 ```
 
+Per associare l'account Google al server ACP (modalità identica a Zed / T3 Code):
+```
+/antigravity auth
+```
+
 Per selezionare un modello Antigravity in Pi:
 ```
-/model
+/model antigravity/gemini-3.8-flash
 ```
-e seleziona ad esempio `antigravity/gemini-3.8-flash-high`.
+

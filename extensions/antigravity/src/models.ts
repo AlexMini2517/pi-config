@@ -326,17 +326,13 @@ export const KNOWN_ANTIGRAVITY_MODELS: readonly AntigravityModelConfig[] = [
 
 /**
  * Resolves models for the Antigravity provider in Pi.
- * Tries dynamic discovery via `agy models`, falling back to KNOWN_ANTIGRAVITY_MODELS.
+ * Returns known supported models synchronously for instant (0ms) extension load time.
+ * Dynamic discovery via `discoverModelsFromAgy` can be called on-demand.
  */
-export async function resolveAntigravityModels(
-  binaryPath?: string
-): Promise<AntigravityModelConfig[]> {
-  const discovered = await discoverModelsFromAgy(binaryPath);
-  if (discovered.length > 0) {
-    return discovered;
-  }
-
-  // Populate reasoning bases for the static fallback models
+export function resolveAntigravityModels(
+  _binaryPath?: string
+): AntigravityModelConfig[] {
+  // Populate reasoning bases for the static models
   for (const base of FALLBACK_REASONING_BASES) {
     reasoningBases.add(base);
   }

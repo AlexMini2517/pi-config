@@ -29,20 +29,27 @@ import {
   KNOWN_ANTIGRAVITY_MODELS,
   resolveAntigravityModels,
 } from "./models.js";
-import { ACP_REGISTRY_URL, ACP_RELEASE_VERSION } from "./acp-support.js";
+import {
+  ACP_REGISTRY_URL,
+  ACP_RELEASE_VERSION,
+  authenticateAcpServer,
+  findAcpServerBinary,
+  installAcpServer,
+  isAcpAuthenticated,
+} from "./acp-support.js";
 
 export const PROVIDER_NAME = "antigravity";
 
 export default async function (pi: ExtensionAPI) {
   const binaryPath = findAntigravityBinary();
-  const models = await resolveAntigravityModels(binaryPath ?? undefined);
+  const models = resolveAntigravityModels(binaryPath ?? undefined);
 
   // 1. Register the Antigravity Provider in Pi
   pi.registerProvider(PROVIDER_NAME, {
     name: "Google Antigravity",
     // baseUrl and apiKey are required by Pi to consider a provider "configured"
     // and show its models. This provider never makes HTTP requests — streamSimple
-    // spawns the local agy CLI which handles its own Google OAuth.
+    // spawns the local agy CLI or ACP server which handles authentic Google OAuth.
     baseUrl: "http://localhost:0/antigravity-cli",
     apiKey: "local-cli-auth",
     api: "openai-completions",
@@ -74,19 +81,54 @@ export default async function (pi: ExtensionAPI) {
         case "status": {
           ctx.ui.notify("Checking Antigravity status...", "info");
           const status = await checkAntigravityStatus();
+          const acp = findAcpServerBinary();
+          const acpAuth = isAcpAuthenticated();
+          const activeMode = (acp && acpAuth)
+            ? "Official ACP Server (Zed / T3 Code mode)"
+            : "Official CLI Runner (agy active session)";
+
           if (status.available && status.authenticated) {
             ctx.ui.notify(
-              `Antigravity Connected! Binary: ${status.binaryPath} (${status.models.length} models available)`,
+              `Antigravity Connected via ${activeMode}!\nBinary: ${status.binaryPath}\nModels available: ${status.models.length || "Standard catalog"}\nACP Server: ${acp ? "Installed" : "Not installed"}\nACP Token: ${acpAuth ? "Authenticated" : "Not paired (run '/antigravity auth' to pair)"}`,
               "info"
             );
           } else if (status.available) {
             ctx.ui.notify(
-              `Antigravity found at ${status.binaryPath} but authentication check failed: ${status.error || "Please run 'agy' in terminal to log in"}`,
+              `Antigravity found at ${status.binaryPath} (${activeMode}) but authentication check failed: ${status.error || "Please run 'agy' in terminal to log in"}`,
               "warning"
             );
           } else {
             ctx.ui.notify(
-              `Antigravity not found. Error: ${status.error || "Please install the official 'agy' CLI or ACP server"}`,
+              `Antigravity not found. Error: ${status.error || "Run '/antigravity install-acp' or install 'agy' CLI."}`,
+              "error"
+            );
+          }
+          break;
+        }
+
+        case "install-acp": {
+          ctx.ui.notify("Starting official Google ACP server installation...", "info");
+          try {
+            const res = await installAcpServer((msg) => ctx.ui.notify(msg, "info"));
+            ctx.ui.notify(`ACP server ready: ${res.executablePath}\nRun '/antigravity auth' to connect your Google account.`, "info");
+          } catch (err) {
+            ctx.ui.notify(
+              `ACP installation failed: ${err instanceof Error ? err.message : String(err)}`,
+              "error"
+            );
+          }
+          break;
+        }
+
+        case "auth":
+        case "login": {
+          ctx.ui.notify("Starting Google authentication for ACP server...", "info");
+          try {
+            const res = await authenticateAcpServer((msg) => ctx.ui.notify(msg, "info"));
+            ctx.ui.notify(res.message, "info");
+          } catch (err) {
+            ctx.ui.notify(
+              `ACP authentication failed: ${err instanceof Error ? err.message : String(err)}`,
               "error"
             );
           }
@@ -137,9 +179,10 @@ export default async function (pi: ExtensionAPI) {
         default: {
           ctx.ui.notify(
             "Antigravity commands:\n" +
-              "/antigravity status  - Check connection & auth\n" +
-              "/antigravity models  - List available models\n" +
-              "/antigravity test    - Verify connection\n" +
+              "/antigravity status      - Check connection, ACP & auth status\n" +
+              "/antigravity install-acp  - Install official Google ACP server bundle\n" +
+              "/antigravity models      - List available models\n" +
+              "/antigravity test        - Verify connection\n" +
               "/antigravity task <prompt> - Run task via Antigravity",
             "info"
           );

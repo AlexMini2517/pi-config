@@ -64,11 +64,18 @@ export function findAntigravityBinary(): string | null {
   return "agy";
 }
 
+import { findAcpServerBinary, isAcpAuthenticated } from "./acp-support.js";
+import { AcpSession } from "./acp-client.js";
+
 /**
- * Checks Antigravity CLI status, version, and authentication.
+ * Checks Antigravity CLI and ACP server status, version, and authentication.
  */
 export async function checkAntigravityStatus(): Promise<AgyStatus> {
-  const binaryPath = findAntigravityBinary();
+  const acpBin = findAcpServerBinary();
+  const acpAuth = isAcpAuthenticated();
+  const agyCli = findAntigravityBinary();
+  const binaryPath = acpAuth && acpBin ? acpBin.executablePath : (agyCli || acpBin?.executablePath);
+
   if (!binaryPath) {
     return {
       available: false,
@@ -76,84 +83,89 @@ export async function checkAntigravityStatus(): Promise<AgyStatus> {
       source: "not-found",
       authenticated: false,
       models: [],
-      error: "Google Antigravity CLI ('agy') not found on this machine.",
+      error: "Google Antigravity not found. Install official ACP server or agy CLI.",
     };
   }
 
-  return new Promise<AgyStatus>((resolve) => {
-    const child = spawn(binaryPath, ["models"], {
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-
-    let stdout = "";
-    let stderr = "";
-
-    child.stdout.on("data", (chunk) => {
-      stdout += chunk.toString();
-    });
-
-    child.stderr.on("data", (chunk) => {
-      stderr += chunk.toString();
-    });
-
-    const timeout = setTimeout(() => {
-      child.kill();
-      resolve({
-        available: false,
-        binaryPath,
-        source: "local-cli",
-        authenticated: false,
-        models: [],
-        error: "Timeout checking Antigravity status.",
+  // Probe models using agy CLI or known models
+  if (agyCli) {
+    return new Promise<AgyStatus>((resolve) => {
+      const child = spawn(agyCli, ["models"], {
+        windowsHide: true,
+        stdio: ["ignore", "pipe", "pipe"],
       });
-    }, 6000);
 
-    child.on("error", (err) => {
-      clearTimeout(timeout);
-      resolve({
-        available: false,
-        binaryPath,
-        source: "not-found",
-        authenticated: false,
-        models: [],
-        error: `Could not launch '${binaryPath}': ${err.message}`,
+      let stdout = "";
+      let stderr = "";
+
+      child.stdout.on("data", (chunk) => {
+        stdout += chunk.toString();
       });
-    });
 
-    child.on("close", (code) => {
-      clearTimeout(timeout);
-      if (code === 0) {
-        const models = stdout
-          .split(/\r?\n/)
-          .map((line) => line.split(/\t+|\s{2,}/)[0]?.trim())
-          .filter((m): m is string => Boolean(m && !m.startsWith("Fetching")));
+      child.stderr.on("data", (chunk) => {
+        stderr += chunk.toString();
+      });
 
+      const timeout = setTimeout(() => {
+        child.kill();
         resolve({
           available: true,
           binaryPath,
-          source: "local-cli",
+          source: acpBin ? "acp-binary" : "local-cli",
           authenticated: true,
-          models,
-        });
-      } else {
-        const errorMsg = stderr || stdout || `Process exited with code ${code}`;
-        const isAuthIssue =
-          errorMsg.includes("login") ||
-          errorMsg.includes("authenticate") ||
-          errorMsg.includes("token");
-
-        resolve({
-          available: true,
-          binaryPath,
-          source: "local-cli",
-          authenticated: !isAuthIssue,
           models: [],
-          error: errorMsg.trim(),
+          error: "Timeout checking Antigravity models.",
         });
-      }
+      }, 6000);
+
+      child.on("error", (err) => {
+        clearTimeout(timeout);
+        resolve({
+          available: Boolean(acpBin),
+          binaryPath,
+          source: acpBin ? "acp-binary" : "not-found",
+          authenticated: Boolean(acpBin),
+          models: [],
+          error: `Could not launch '${agyCli}': ${err.message}`,
+        });
+      });
+
+      child.on("close", (code) => {
+        clearTimeout(timeout);
+        if (code === 0) {
+          const models = stdout
+            .split(/\r?\n/)
+            .map((line) => line.split(/\t+|\s{2,}/)[0]?.trim())
+            .filter((m): m is string => Boolean(m && !m.startsWith("Fetching")));
+
+          resolve({
+            available: true,
+            binaryPath,
+            source: acpBin ? "acp-binary" : "local-cli",
+            authenticated: true,
+            models,
+          });
+        } else {
+          resolve({
+            available: true,
+            binaryPath,
+            source: acpBin ? "acp-binary" : "local-cli",
+            authenticated: Boolean(acpBin),
+            models: [],
+            error: (stderr || stdout || `Process exited with code ${code}`).trim(),
+          });
+        }
+      });
     });
-  });
+  }
+
+  return {
+    available: true,
+    binaryPath,
+    source: "acp-binary",
+    authenticated: true,
+    models: [],
+  };
 }
 
 /**
@@ -210,7 +222,7 @@ export function formatTranscriptForPrompt(context: TranscriptContext): string {
 }
 
 /**
- * Streams completion from Google Antigravity CLI via stream-json.
+ * Streams completion from Google Antigravity (ACP Server or CLI).
  */
 export function streamAntigravityPrompt(
   model: Model<any>,
@@ -218,7 +230,9 @@ export function streamAntigravityPrompt(
   options?: SimpleStreamOptions
 ): AssistantMessageEventStream {
   const stream = createAssistantMessageEventStream();
-  const binaryPath = findAntigravityBinary() || "agy";
+  const acpBin = findAcpServerBinary();
+  const useAcp = Boolean(acpBin && isAcpAuthenticated());
+  const binaryPath = useAcp && acpBin ? acpBin.executablePath : (findAntigravityBinary() || "agy");
 
   const output: AssistantMessage = {
     role: "assistant",
@@ -240,132 +254,244 @@ export function streamAntigravityPrompt(
 
   (async () => {
     try {
+      if (options?.signal?.aborted) {
+        output.stopReason = "aborted";
+        stream.push({ type: "error", reason: "aborted", error: output });
+        stream.end();
+        return;
+      }
+
       // 1. Send start event
       stream.push({ type: "start", partial: output });
 
       // 2. Prepare prompt text
       const promptText = formatTranscriptForPrompt(context);
 
-      // 3. Build spawn arguments — resolve the actual agy model ID from
-      //    the base model + Pi's reasoning level (e.g. gemini-3.8-flash + high → gemini-3.8-flash-high)
-      const agyModelId = resolveAgyModelId(model.id, options?.reasoning);
-      const args = [
-        "--model",
-        agyModelId,
-        "--output-format",
-        "stream-json",
-      ];
+      // Route A: Official ACP server (identical to Zed & T3 Code)
+      if (useAcp && acpBin) {
+        let textIndex = -1;
+        let thinkingIndex = -1;
 
-      // 4. Spawn child process
-      const child = spawn(binaryPath, args, {
-        windowsHide: true,
-        stdio: ["pipe", "pipe", "pipe"],
-      });
-
-      // Handle abort signal
-      if (options?.signal) {
-        const abortHandler = () => {
-          child.kill();
-        };
-        options.signal.addEventListener("abort", abortHandler, { once: true });
-        child.on("close", () => {
-          options.signal?.removeEventListener("abort", abortHandler);
+        const session = await AcpSession.create({
+          executablePath: acpBin.executablePath,
+          harnessPath: acpBin.harnessPath,
+          mode: "default",
+          model: model.id,
+          signal: options?.signal,
         });
-      }
 
-      // Write prompt to stdin and close stdin
-      child.stdin.write(promptText, "utf8");
-      child.stdin.end();
-
-      // Ensure content block exists for streaming text
-      output.content.push({ type: "text", text: "" });
-      const contentIndex = 0;
-      stream.push({ type: "text_start", contentIndex, partial: output });
-
-      // Process NDJSON line by line
-      const rl = readline.createInterface({
-        input: child.stdout,
-        crlfDelay: Infinity,
-      });
-
-      let stderrOutput = "";
-      child.stderr.on("data", (chunk) => {
-        stderrOutput += chunk.toString();
-      });
-
-      for await (const line of rl) {
-        if (!line.trim()) continue;
-        try {
-          const parsed = JSON.parse(line) as AgyStreamEvent;
-
-          if (parsed.event === "step_update" && "step_update" in parsed) {
-            const step = parsed.step_update;
-
-            if (step.text_delta) {
-              const currentBlock = output.content[contentIndex];
-              if (currentBlock && currentBlock.type === "text") {
-                currentBlock.text += step.text_delta;
+        await session.prompt(promptText, {
+          onThoughtDelta: (delta) => {
+            if (thinkingIndex === -1) {
+              thinkingIndex = output.content.length;
+              output.content.push({ type: "thinking", thinking: "" });
+              stream.push({
+                type: "thinking_start",
+                contentIndex: thinkingIndex,
+                partial: output,
+              });
+            }
+            const block = output.content[thinkingIndex];
+            if (block && block.type === "thinking") {
+              block.thinking += delta;
+              stream.push({
+                type: "thinking_delta",
+                contentIndex: thinkingIndex,
+                delta,
+                partial: output,
+              });
+            }
+          },
+          onTextDelta: (delta) => {
+            // If thinking was open and text begins, finalize thinking block
+            if (thinkingIndex !== -1 && textIndex === -1) {
+              const thinkBlock = output.content[thinkingIndex];
+              if (thinkBlock && thinkBlock.type === "thinking") {
                 stream.push({
-                  type: "text_delta",
-                  contentIndex,
-                  delta: step.text_delta,
+                  type: "thinking_end",
+                  contentIndex: thinkingIndex,
+                  content: thinkBlock.thinking,
                   partial: output,
                 });
               }
             }
+            if (textIndex === -1) {
+              textIndex = output.content.length;
+              output.content.push({ type: "text", text: "" });
+              stream.push({
+                type: "text_start",
+                contentIndex: textIndex,
+                partial: output,
+              });
+            }
+            const block = output.content[textIndex];
+            if (block && block.type === "text") {
+              block.text += delta;
+              stream.push({
+                type: "text_delta",
+                contentIndex: textIndex,
+                delta,
+                partial: output,
+              });
+            }
+          },
+          onUsage: (usage) => {
+            output.usage.input = usage.inputTokens;
+            output.usage.output = usage.outputTokens;
+            output.usage.totalTokens = usage.totalTokens;
+          },
+        });
 
-            if (step.usage) {
-              output.usage.input = step.usage.input_tokens || output.usage.input;
-              output.usage.output = step.usage.output_tokens || output.usage.output;
-              output.usage.cacheRead = step.usage.cache_read_tokens || 0;
-              output.usage.totalTokens = step.usage.total_tokens || output.usage.totalTokens;
-            }
-          } else if (parsed.event === "result" && "result" in parsed) {
-            const res = parsed.result;
-            if (res.usage) {
-              output.usage.input = res.usage.input_tokens || output.usage.input;
-              output.usage.output = res.usage.output_tokens || output.usage.output;
-              output.usage.cacheRead = res.usage.cache_read_tokens || 0;
-              output.usage.totalTokens = res.usage.total_tokens || output.usage.totalTokens;
-            }
-            if (res.status === "ERROR") {
-              output.stopReason = "error";
-              output.errorMessage = res.error || "Antigravity execution failed";
-            }
+        session.close();
+
+        // Close thinking if it was never closed by text
+        if (thinkingIndex !== -1 && textIndex === -1) {
+          const thinkBlock = output.content[thinkingIndex];
+          if (thinkBlock && thinkBlock.type === "thinking") {
+            stream.push({
+              type: "thinking_end",
+              contentIndex: thinkingIndex,
+              content: thinkBlock.thinking,
+              partial: output,
+            });
           }
-        } catch {
-          // Non-JSON line (ignore or log)
+        }
+        // Close text if opened
+        if (textIndex !== -1) {
+          const textBlock = output.content[textIndex];
+          if (textBlock && textBlock.type === "text") {
+            stream.push({
+              type: "text_end",
+              contentIndex: textIndex,
+              content: textBlock.text,
+              partial: output,
+            });
+          }
+        } else if (thinkingIndex === -1) {
+          // If neither thinking nor text was pushed, emit empty text block
+          const emptyIdx = output.content.length;
+          output.content.push({ type: "text", text: "" });
+          stream.push({ type: "text_start", contentIndex: emptyIdx, partial: output });
+          stream.push({ type: "text_end", contentIndex: emptyIdx, content: "", partial: output });
+        }
+
+        output.stopReason = "stop";
+      } else {
+        // Route B: Official Google Antigravity CLI runner
+        const contentIndex = output.content.length;
+        output.content.push({ type: "text", text: "" });
+        stream.push({ type: "text_start", contentIndex, partial: output });
+
+        const agyModelId = resolveAgyModelId(model.id, options?.reasoning);
+        const args = [
+          "--model",
+          agyModelId,
+          "--output-format",
+          "stream-json",
+          "--disable-slash-commands",
+        ];
+
+        const child = spawn(binaryPath, args, {
+          windowsHide: true,
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+
+        if (options?.signal) {
+          const abortHandler = () => child.kill();
+          options.signal.addEventListener("abort", abortHandler, { once: true });
+          child.on("close", () => {
+            options.signal?.removeEventListener("abort", abortHandler);
+          });
+        }
+
+        child.stdin.write(promptText, "utf8");
+        child.stdin.end();
+
+        const rl = readline.createInterface({
+          input: child.stdout,
+          crlfDelay: Infinity,
+        });
+
+        let stderrOutput = "";
+        child.stderr.on("data", (chunk) => {
+          stderrOutput += chunk.toString();
+        });
+
+        for await (const line of rl) {
+          if (!line.trim()) continue;
+          try {
+            const parsed = JSON.parse(line) as AgyStreamEvent;
+
+            if (parsed.event === "step_update" && "step_update" in parsed) {
+              const step = parsed.step_update;
+
+              if (step.text_delta) {
+                const currentBlock = output.content[contentIndex];
+                if (currentBlock && currentBlock.type === "text") {
+                  currentBlock.text += step.text_delta;
+                  stream.push({
+                    type: "text_delta",
+                    contentIndex,
+                    delta: step.text_delta,
+                    partial: output,
+                  });
+                }
+              }
+
+              if (step.usage) {
+                output.usage.input = step.usage.input_tokens || output.usage.input;
+                output.usage.output = step.usage.output_tokens || output.usage.output;
+                output.usage.cacheRead = step.usage.cache_read_tokens || 0;
+                output.usage.totalTokens = step.usage.total_tokens || output.usage.totalTokens;
+              }
+            } else if (parsed.event === "result" && "result" in parsed) {
+              const res = parsed.result;
+              if (res.usage) {
+                output.usage.input = res.usage.input_tokens || output.usage.input;
+                output.usage.output = res.usage.output_tokens || output.usage.output;
+                output.usage.cacheRead = res.usage.cache_read_tokens || 0;
+                output.usage.totalTokens = res.usage.total_tokens || output.usage.totalTokens;
+              }
+              if (res.status === "ERROR") {
+                output.stopReason = "error";
+                output.errorMessage = res.error || "Antigravity execution failed";
+              }
+            }
+          } catch {
+            // non-json line
+          }
+        }
+
+        await new Promise<void>((resolve, reject) => {
+          child.on("error", reject);
+          child.on("close", (code) => {
+            if (options?.signal?.aborted) {
+              output.stopReason = "aborted";
+              resolve();
+              return;
+            }
+            if (code !== 0 && output.stopReason !== "error") {
+              output.stopReason = "error";
+              output.errorMessage = stderrOutput.trim() || `Antigravity CLI exited with code ${code}`;
+            } else if (output.stopReason === "pending") {
+              output.stopReason = "stop";
+            }
+            resolve();
+          });
+        });
+
+        // Finalize text block for CLI runner
+        const finalBlock = output.content[contentIndex];
+        if (finalBlock && finalBlock.type === "text") {
+          stream.push({
+            type: "text_end",
+            contentIndex,
+            content: finalBlock.text,
+            partial: output,
+          });
         }
       }
 
-      await new Promise<void>((resolve, reject) => {
-        child.on("error", reject);
-        child.on("close", (code) => {
-          if (options?.signal?.aborted) {
-            output.stopReason = "aborted";
-            resolve();
-            return;
-          }
-          if (code !== 0 && output.stopReason !== "error") {
-            output.stopReason = "error";
-            output.errorMessage = stderrOutput.trim() || `Antigravity CLI exited with code ${code}`;
-          } else if (output.stopReason === "pending") {
-            output.stopReason = "stop";
-          }
-          resolve();
-        });
-      });
-
-      // Finalize text block
-      const finalBlock = output.content[contentIndex];
-      if (finalBlock && finalBlock.type === "text") {
-        stream.push({
-          type: "text_end",
-          contentIndex,
-          content: finalBlock.text,
-          partial: output,
-        });
-      }
 
       if (output.stopReason === "error") {
         stream.push({ type: "error", reason: "error", error: output });
@@ -386,7 +512,7 @@ export function streamAntigravityPrompt(
 
 /**
  * Runs a standalone Antigravity task in the workspace.
- * Allows Pi's agent to delegate tasks directly to Google Antigravity.
+ * Uses official ACP session (identical to Zed & T3 Code) or agy CLI with yolo permissions.
  */
 export async function runAntigravityTask(
   prompt: string,
@@ -397,9 +523,56 @@ export async function runAntigravityTask(
     signal?: AbortSignal;
   }
 ): Promise<{ success: boolean; response: string; usage?: { input: number; output: number; total: number } }> {
+  if (options?.signal?.aborted) {
+    return { success: false, response: "Task aborted." };
+  }
+
+  const acpBin = findAcpServerBinary();
+  const useAcp = Boolean(acpBin && isAcpAuthenticated());
+
+  // Route A: Official ACP server with "yolo" full-access permissions (T3 Code / Zed pattern)
+  if (useAcp && acpBin) {
+    try {
+      const session = await AcpSession.create({
+        executablePath: acpBin.executablePath,
+        harnessPath: acpBin.harnessPath,
+        cwd: options?.cwd || process.cwd(),
+        mode: "yolo",
+        model: options?.model,
+        signal: options?.signal,
+      });
+
+      const result = await session.prompt(prompt, {
+        onTextDelta: options?.onUpdate,
+      });
+
+      session.close();
+      return {
+        success: true,
+        response: result.response || "Task completed successfully via ACP.",
+        usage: {
+          input: result.usage.inputTokens,
+          output: result.usage.outputTokens,
+          total: result.usage.totalTokens,
+        },
+      };
+    } catch (err) {
+      return {
+        success: false,
+        response: `ACP execution error: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
+  }
+
+  // Route B: Official Antigravity CLI runner
   const binaryPath = findAntigravityBinary() || "agy";
   const agyModelId = options?.model ? resolveAgyModelId(options.model) : undefined;
-  const args = ["--output-format", "stream-json"];
+  const args = [
+    "--output-format",
+    "stream-json",
+    "--disable-slash-commands",
+    "--dangerously-skip-permissions",
+  ];
 
   if (agyModelId) {
     args.push("--model", agyModelId);
@@ -475,3 +648,4 @@ export async function runAntigravityTask(
     usage,
   };
 }
+
