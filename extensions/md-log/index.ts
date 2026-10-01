@@ -178,6 +178,7 @@ export default function mdLog(pi: ExtensionAPI) {
 		if (!msg || !("role" in msg)) return;
 
 		if (msg.role === "user") {
+			if (!logFile) return;
 			const rawText = typeof msg.content === "string"
 				? msg.content
 				: Array.isArray(msg.content)
@@ -185,15 +186,6 @@ export default function mdLog(pi: ExtensionAPI) {
 					: "";
 			const text = stripSkillBlocks(rawText.trim());
 			if (!text) return;
-
-			if (!logFile) {
-				const dir = getSavedDir();
-				if (dir) {
-					const sid = ctx?.sessionManager?.getSessionId?.() || "session";
-					initLogFile(text, sid, dir, ctx);
-				}
-			}
-			if (!logFile) return;
 
 			assistantHeaderWritten = false;
 			await withLock(() => {
